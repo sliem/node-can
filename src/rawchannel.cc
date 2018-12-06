@@ -100,11 +100,12 @@ public:
   }
 
 private:
-  explicit RawChannel(const char *name, bool timestamps = false) : m_Thread(0), m_Name(name), m_SocketFd(-1)
+  explicit RawChannel(const char *name, bool timestamps = false, unsigned int pollsleep = 0) : m_Thread(0), m_Name(name), m_SocketFd(-1)
   {
     m_SocketFd = socket(PF_CAN, SOCK_RAW, CAN_RAW);
     m_ThreadStopRequested = false;
     m_TimestampsSupported = timestamps;
+    m_PollSleep = pollsleep;
 
     if (m_SocketFd > 0)
     {
@@ -163,11 +164,14 @@ private:
   static NAN_METHOD(New)
   {
     bool timestamps = false;
+    unsigned int pollsleep = 0;
 
     CHECK_CONDITION(info.IsConstructCall(), "Must be called with new");
     CHECK_CONDITION(info.Length() >= 1, "Too few arguments");
     CHECK_CONDITION(info[0]->IsString(), "First argument must be a string");
-
+  
+    v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
+  
     Nan::Utf8String ascii(info[0]->ToString());
 
     if (info.Length() >= 2)
@@ -175,8 +179,15 @@ private:
       if (info[1]->IsBoolean())
         timestamps = info[1]->IsTrue();
     }
-
-    RawChannel* hw = new RawChannel(*ascii, timestamps);
+  
+    if (info.Length() >= 3)
+    {
+      if (info[2]->IsNumber()) {
+        pollsleep = (int) info[2]->ToNumber(context).ToLocalChecked()->Value();
+      }
+    }
+ 
+    RawChannel* hw = new RawChannel(*ascii, timestamps, pollsleep);
     hw->Wrap(info.This());
 
     CHECK_CONDITION(hw->IsValid(), "Error while creating channel");
@@ -403,6 +414,7 @@ private:
 
   bool m_ThreadStopRequested;
   bool m_TimestampsSupported;
+  unsigned int  m_PollSleep;
 
   static void * c_thread_entry(void *_this) { assert(_this); reinterpret_cast<RawChannel *>(_this)->ThreadEntry(); return NULL; }
 
@@ -427,6 +439,8 @@ private:
           uv_async_send(&m_AsyncChannelStopped);
           break;
         }
+        if (m_PollSleep > 0)
+          usleep(m_PollSleep);
       }
       else
       {
